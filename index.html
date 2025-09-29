@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>vowel (1.02 alpha) Game</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+    .joystick { position: absolute; bottom: 20px; left: 20px; width: 100px; height: 100px; border-radius: 50%; background: rgba(0, 0, 0, 0.5); display: flex; justify-content: center; align-items: center; }
+    .stick { width: 50px; height: 50px; border-radius: 50%; background: rgba(255, 255, 255, 0.8); transition: transform 0.1s; }
+    .instructions { position: absolute; bottom: 20px; left: 20px; color: white; font-size: 14px; background: rgba(0, 0, 0, 0.7); padding: 10px; border-radius: 5px; display: none; }
+    .boost-button { position: absolute; bottom: 20px; right: 20px; width: 80px; height: 40px; background: rgba(255, 0, 0, 0.8); color: white; font-size: 14px; text-align: center; line-height: 40px; border-radius: 5px; display: none; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <div class="joystick" id="joystick"><div class="stick" id="stick"></div></div>
+  <div class="instructions" id="instructions">Use arrow keys or WASD to control and hold Shift to run.</div>
+  <div class="boost-button" id="boostButton">Boost</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const player = { radius: 20, speed: 5, runningSpeed: 10, transparent: false };
+const world = { offsetX: 0, offsetY: 0 };
+const bushes = [], rocks = [], grasses = [], flowers = [];
+const joystick = document.getElementById('joystick'), stick = document.getElementById('stick');
+const boostButton = document.getElementById('boostButton');
+let joystickActive = false, joystickDx = 0, joystickDy = 0, isBoosting = false;
+const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false, Shift: false, w: false, a: false, s: false, d: false };
+
+function isMobileDevice() { return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent); }
+if (isMobileDevice()) { joystick.style.display = 'flex'; boostButton.style.display = 'block'; } else { joystick.style.display = 'none'; document.getElementById('instructions').style.display = 'block'; }
+
+// ===== WORLD GENERATION =====
+function generateWorld() {
+  for (let i = 0; i < 500; i++) {
+    const bushGroupSize = Math.random() < 0.5 ? 8 : Math.random() < 0.7 ? 6 : 4;
+    const groupX = Math.random() * 10000 - 5000, groupY = Math.random() * 10000 - 5000;
+    for (let j = 0; j < bushGroupSize; j++) bushes.push({ x: groupX + Math.random() * 100 - 55, y: groupY + Math.random() * 100 - 55, size: Math.random() * 50 + 20 });
+    if (Math.random() < 0.5) rocks.push({ x: Math.random() * 10000 - 5000, y: Math.random() * 10000 - 5000, size: Math.random() * 50 + 40, angle: Math.random() * Math.PI * 2 });
+  }
+}
+function generateGrass() { for (let i = 0; i < 10000; i++) grasses.push({ x: Math.random() * 10000 - 5000, y: Math.random() * 10000 - 5000 }); }
+function generateFlowers() { const colors = ['yellow', 'pink', 'red', 'blue']; for (let i = 0; i < 500; i++) flowers.push({ x: Math.random() * 10000 - 5000, y: Math.random() * 10000 - 5000, radius: 4 + Math.random() * 4, color: colors[Math.floor(Math.random() * colors.length)] }); }
+generateWorld(); generateGrass(); generateFlowers();
+
+// ===== CLOUDS =====
+const clouds = [];
+function generateClouds(num = 15) {
+  for (let i = 0; i < num; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    clouds.push({ baseX: Math.random() * 10000 - 5000, baseY: Math.random() * 10000 - 5000, driftX: 0, driftY: 0, dx: Math.cos(angle) * 0.05, dy: Math.sin(angle) * 0.05, size: 150 + Math.random() * 100 });
+  }
+}
+generateClouds();
+function updateClouds() { clouds.forEach(c => { c.driftX += c.dx; c.driftY += c.dy; }); }
+function drawCloud(x, y, size) {
+  ctx.globalAlpha = 0.1; ctx.fillStyle = "white";
+  ctx.beginPath();
+  ctx.arc(x, y, size * 0.4, 0, Math.PI * 2);
+  ctx.arc(x + size * 0.3, y - size * 0.2, size * 0.35, 0, Math.PI * 2);
+  ctx.arc(x - size * 0.3, y - size * 0.2, size * 0.35, 0, Math.PI * 2);
+  ctx.arc(x + size * 0.15, y + size * 0.2, size * 0.3, 0, Math.PI * 2);
+  ctx.fill(); ctx.globalAlpha = 1;
+}
+function drawClouds() { clouds.forEach(c => drawCloud(c.baseX + c.driftX - world.offsetX, c.baseY + c.driftY - world.offsetY, c.size)); }
+
+// ===== BUTTERFLIES =====
+const butterflies = [];
+const butterflyColors = ["#ff69b4", "#ff8c00", "#ffd700", "#adff2f", "#00ced1", "#9370db"];
+function generateButterflies(num = 25) {
+  for (let i = 0; i < num; i++) butterflies.push({ x: Math.random() * 10000 - 5000, y: Math.random() * 10000 - 5000, angle: Math.random() * Math.PI * 2, speed: 0.5 + Math.random() * 0.5, color: butterflyColors[Math.floor(Math.random() * butterflyColors.length)], flap: 0 });
+}
+generateButterflies();
+function updateButterflies() { butterflies.forEach(b => { b.angle += (Math.random() - 0.5) * 0.2; b.x += Math.cos(b.angle) * b.speed; b.y += Math.sin(b.angle) * b.speed; b.flap += 0.2; }); }
+function drawButterfly(b) {
+  ctx.save();
+  ctx.translate(b.x - world.offsetX, b.y - world.offsetY);
+  ctx.rotate(Math.sin(b.flap) * 0.2);
+  ctx.fillStyle = b.color;
+  ctx.beginPath();
+  ctx.ellipse(-5, 0, 8, 5 + Math.sin(b.flap) * 2, 0, 0, Math.PI * 2);
+  ctx.ellipse(5, 0, 8, 5 + Math.sin(b.flap + Math.PI) * 2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// ===== DRAW FUNCTIONS =====
+function drawGrass(x, y) { ctx.fillStyle = '#32CD32'; ctx.beginPath(); ctx.moveTo(x - world.offsetX, y - world.offsetY); ctx.lineTo(x - world.offsetX - 2, y - world.offsetY + 20); ctx.lineTo(x - world.offsetX + 2, y - world.offsetY + 20); ctx.closePath(); ctx.fill(); }
+function drawBush(x, y, size) { ctx.fillStyle = '#228B22'; ctx.beginPath(); ctx.arc(x - world.offsetX, y - world.offsetY, size / 2, 0, Math.PI * 2); ctx.fill(); }
+function drawRock(x, y, size, angle) { ctx.fillStyle = '#8B4513'; ctx.save(); ctx.translate(x - world.offsetX, y - world.offsetY); ctx.rotate(angle); ctx.fillRect(-size / 2, -size / 2, size, size); ctx.restore(); }
+function drawFlowers() { flowers.forEach(f => { ctx.beginPath(); ctx.fillStyle = f.color; ctx.arc(f.x - world.offsetX, f.y - world.offsetY, f.radius, 0, Math.PI * 2); ctx.fill(); }); }
+function drawPlayer() { ctx.fillStyle = player.transparent ? 'rgba(255, 0, 0, 0.5)' : '#FF0000'; ctx.beginPath(); ctx.arc(canvas.width / 2, canvas.height / 2, player.radius, 0, Math.PI * 2); ctx.fill(); }
+
+// ===== GAME LOOP =====
+function gameLoop() {
+  ctx.fillStyle = '#7CFC00'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  grasses.forEach(grass => drawGrass(grass.x, grass.y));
+  bushes.forEach(bush => drawBush(bush.x, bush.y, bush.size));
+  rocks.forEach(rock => drawRock(rock.x, rock.y, rock.size, rock.angle));
+  drawFlowers();
+  updateButterflies();
+  butterflies.forEach(drawButterfly);
+  drawPlayer();
+  updateClouds();
+  drawClouds();
+  const speed = keys.Shift || isBoosting ? player.runningSpeed : player.speed;
+  if (joystickActive) { world.offsetX += joystickDx * speed; world.offsetY += joystickDy * speed; }
+  else { if (keys.ArrowUp || keys.w) world.offsetY -= speed; if (keys.ArrowDown || keys.s) world.offsetY += speed; if (keys.ArrowLeft || keys.a) world.offsetX -= speed; if (keys.ArrowRight || keys.d) world.offsetX += speed; }
+  requestAnimationFrame(gameLoop);
+}
+gameLoop();
+
+// ===== CONTROLS =====
+function movePlayerWithJoystick(event) {
+  const rect = joystick.getBoundingClientRect(), center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  const touch = event.touches[0], dx = touch.clientX - center.x, dy = touch.clientY - center.y, maxDist = 40, dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist > maxDist) { const angle = Math.atan2(dy, dx); joystickDx = Math.cos(angle); joystickDy = Math.sin(angle); stick.style.transform = `translate(${Math.cos(angle) * maxDist}px, ${Math.sin(angle) * maxDist}px)`; }
+  else { joystickDx = dx / maxDist; joystickDy = dy / maxDist; stick.style.transform = `translate(${dx}px, ${dy}px)`; }
+}
+joystick.addEventListener('touchstart', e => { joystickActive = true; movePlayerWithJoystick(e); });
+joystick.addEventListener('touchmove', e => { if (joystickActive) movePlayerWithJoystick(e); });
+joystick.addEventListener('touchend', () => { joystickActive = false; joystickDx = joystickDy = 0; stick.style.transform = 'translate(0,0)'; });
+boostButton.addEventListener('touchstart', () => { isBoosting = true; });
+boostButton.addEventListener('touchend', () => { isBoosting = false; });
+window.addEventListener('keydown', e => { if (keys.hasOwnProperty(e.key)) keys[e.key] = true; });
+window.addEventListener('keyup', e => { if (keys.hasOwnProperty(e.key)) keys[e.key] = false; });
+</script>
+</body>
+</html>
+
